@@ -27,7 +27,13 @@ Determine the exact level of EPA enforcement and server signing enforced on Doma
 uv run relayinformer ldap --method LDAPS --dc-ip 192.168.1.10
 
 # Lookup SRV records to check all DCs
-uv run relayinformer ldap --method BOTH --dns -u username -p mypass -d domain.local
+uv run relayinformer ldap --method BOTH --dc-ip 192.168.1.10 --dns 192.168.1.53 -u username -p mypass -d domain.local
+
+# Check one known DC directly without SRV discovery
+uv run relayinformer ldap --method LDAPS --target dc01.domain.local -d domain.local
+
+# Check known DCs from a file without SRV discovery
+uv run relayinformer ldap --method BOTH --target dc-targets.txt -u username -p mypass -d domain.local
 ```
 
 #### HTTP/HTTPS
@@ -59,4 +65,3 @@ uv run relayinformer mssql --target sql.domain.local --user domain/username --pa
 # Specify custom port
 uv run relayinformer mssql -t sql.domain.local -u admin -p mypass --port 1434
 ```
-
