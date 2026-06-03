@@ -1,117 +1,162 @@
+import getpass
 import typer
-from getpass import getpass
 
-from relayinformer.logger import logger
-from relayinformer.informers.MssqlInformer import MssqlInformer
 from impacket import tds
 
+from relayinformer.logger import logger, OBJ_EXTRA_FMT
+from relayinformer.informers.MssqlInformer import MssqlInformer
+
 app = typer.Typer()
+
 COMMAND_NAME = "mssql"
 HELP = "Check MSSQL servers"
 
+DIRECT_TARGET_PANEL = "Direct Targeting"
+AUTH_PANEL = "Authentication"
+RUNTIME_PANEL = "Runtime"
 
-@app.callback(invoke_without_command=True)
+
+# -----------------------------
+# Colour helpers
+# -----------------------------
+def _colour_state(state: str) -> str:
+    state_lower = state.lower()
+
+    if state_lower == "required":
+        return f"[green]{state}[/]"
+
+    if state_lower == "allowed":
+        return f"[yellow]{state}[/]"
+
+    if state_lower == "off":
+        return f"[red]{state}[/]"
+
+    return state
+
+
+def _vuln_tag(is_vulnerable: bool) -> str:
+
+    if not is_vulnerable:
+        return ""
+
+    return " ([yellow]VULNERABLE[/])"
+
+
+
+# -----------------------------
+def _report_mssql_findings(
+    endpoint: str,
+    enc_state: str,
+    epa_state: str,
+    enc_vulnerable: bool,
+    epa_vulnerable: bool,
+):
+    logger.info(
+        f"[{endpoint}] (MSSQL) Transport Encryption : {_colour_state(enc_state)}"
+        f"{_vuln_tag(enc_vulnerable)}",
+        extra=OBJ_EXTRA_FMT,
+    )
+
+    logger.info(
+        f"[{endpoint}] (MSSQL) EPA Channel Binding  : {_colour_state(epa_state)}"
+        f"{_vuln_tag(epa_vulnerable)}",
+        extra=OBJ_EXTRA_FMT,
+    )
+
+
+# -----------------------------
+@app.callback(invoke_without_command=True, no_args_is_help=True)
 def main(
-        ctx: typer.Context,
-        
-        target:     str = typer.Option(..., "--target", "-t", help="Target hostname or IP address"),
-        user:       str = typer.Option(..., "--user", "-u", help="Username in format [domain/]username"),
-        password:   str = typer.Option(None,"--password", "-p", help="Password for authentication"),
-        hashes:     str = typer.Option(None, "--hashes", help="NTLM hashes in format LMHASH:NTHASH"),
-        port:       int = typer.Option(1433, "--port", help="Target MSSQL port"),
-        
-    ):
-    """
-    Test EPA enforcement level for MSSQL servers using Windows authentication.
-    
-    Examples:
-        relayinformer mssql --target server.com --user domain/username --password mypass
-        relayinformer mssql --target 192.168.1.10 --user domain/username --hashes LM:NT
-        relayinformer mssql -t server.com -u admin -p mypass --port 1434
-    """
-    
-    
-    # Validate user format
+    ctx: typer.Context,
+    target: str = typer.Option(..., "--target", "-t", help="Target hostname or IP address", rich_help_panel=DIRECT_TARGET_PANEL),
+    user: str = typer.Option(..., "--user", "-u", help="Username in format [domain/]username", rich_help_panel=AUTH_PANEL),
+    password: str | None = typer.Option(None, "--password", "-p", help="Password for authentication", rich_help_panel=AUTH_PANEL),
+    hashes: str | None = typer.Option(None, "--hashes", help="NTLM hashes in format LMHASH:NTHASH", rich_help_panel=AUTH_PANEL),
+    port: int = typer.Option(1433, "--port", help="Target MSSQL port", rich_help_panel=RUNTIME_PANEL),
+):
+
     try:
         MssqlInformer.parse_domain_user(user)
     except ValueError as e:
         logger.error(str(e))
         raise typer.Exit(1)
 
-    logger.info(f"Testing EPA enforcement level for MSSQL service at {target} on port {port} as {user}")
-    
+    endpoint = f"{target}:{port}"
+
+    logger.info(
+        f"Testing EPA enforcement level for MSSQL service at {endpoint} as {user}"
+    )
+
+    if password is None and hashes is None:
+        password = getpass.getpass(prompt="Password: ")
+
     try:
         with MssqlInformer(target, user, port) as informer:
-            # Prompt for password if neither password nor hashes provided
-            if password is None and hashes is None:
-                password = getpass("Password:")
-            
-            # Determine encryption requirements
+
             encryption_setting = informer.check_encryption_requirements()
 
-            # Run prerequisite check: ensure normal login flow works with valid/default parameters
             if not informer.prereq_check(password, hashes, None, encryption_setting):
                 logger.error("Prereq check failed, check credentials and try again")
                 raise typer.Exit(1)
-            
+
+            # -----------------------------
+            # ENCRYPTION REQUIRED
+            # -----------------------------
             if encryption_setting == tds.TDS_ENCRYPT_REQ:
-                logger.info("Conducting logins while manipulating channel binding av pair over encrypted connection")
-                
-                # Test with bogus channel binding
-                bogus_cb_result = informer.test_epa_with_bogus_channel_binding(password, hashes, None)
-                if bogus_cb_result == "untrusted_domain":
-                    
-                    # Test with missing channel binding
-                    missing_cb_result = informer.test_epa_with_missing_channel_binding(password, hashes, None)
-                    if missing_cb_result == "untrusted_domain":
-                        logger.info("--------------------------------")                     
-                        logger.info("     EPA setting - Required")
-                        logger.info("--------------------------------")     
+
+                logger.info("Running encrypted EPA channel binding checks")
+
+                bogus_cb = informer.test_epa_with_bogus_channel_binding(password, hashes, None)
+
+                if bogus_cb == "untrusted_domain":
+                    missing_cb = informer.test_epa_with_missing_channel_binding(password, hashes, None)
+
+                    if missing_cb == "untrusted_domain":
+                        _report_mssql_findings(endpoint, "Required", "Required", False, False)
+
                     else:
-                        logger.info("--------------------------------")
-                        logger.info("     EPA setting - Allowed")
-                        logger.info("--------------------------------")
+                        _report_mssql_findings(endpoint, "Required", "Allowed", False, True)
                         raise typer.Exit(1)
+
                 else:
-                    logger.info("--------------------------------")
-                    logger.info("     EPA setting - Off")
-                    logger.info("--------------------------------")
-                    
+                    _report_mssql_findings(endpoint, "Required", "Off", False, True)
+                    raise typer.Exit(1)
+
+            # -----------------------------
+            # ENCRYPTION OFF
+            # -----------------------------
             elif encryption_setting == tds.TDS_ENCRYPT_OFF:
-                logger.info("Conducting logins while manipulating target service av pair over unencrypted connection")
-                
-                # Test with bogus target service
-                bogus_ts_result = informer.test_epa_with_bogus_target_service(password, hashes, None)
-                if bogus_ts_result == "untrusted_domain":
-                    logger.debug("Failed due to EPA (service binding) while supplying bogus target service")
-                    
-                    # Test with missing target service
-                    missing_ts_result = informer.test_epa_with_missing_target_service(password, hashes, None)
-                    if missing_ts_result == "untrusted_domain":
-                        logger.debug("Failed due to EPA (service binding) while excluding target service av pair")
-                        logger.info("--------------------------------")
-                        logger.info("     EPA setting - Required")
-                        logger.info("--------------------------------")
+
+                logger.info("Running unencrypted EPA channel binding checks")
+
+                bogus_ts = informer.test_epa_with_bogus_target_service(password, hashes, None)
+
+                if bogus_ts == "untrusted_domain":
+                    missing_ts = informer.test_epa_with_missing_target_service(password, hashes, None)
+
+                    if missing_ts == "untrusted_domain":
+                        _report_mssql_findings(endpoint, "Off", "Required", True, False)
+
                     else:
-                        logger.info("--------------------------------")
-                        logger.info("     EPA setting - Allowed")
-                        logger.info("--------------------------------")
+                        _report_mssql_findings(endpoint, "Off", "Allowed", True, True)
                         raise typer.Exit(1)
+
                 else:
-                    logger.info("--------------------------------")
-                    logger.info("     EPA setting - Off")
-                    logger.info("--------------------------------")
-                    
+                    _report_mssql_findings(endpoint, "Off", "Off", True, True)
+                    raise typer.Exit(1)
+
             else:
-                logger.error(f"Previously untested encryption setting: {encryption_setting}, please report this to the authors")
-                logger.error("EPA setting - Unknown")
-                            
+                logger.error(f"[{endpoint}] (MSSQL) Transport Encryption : Unknown")
+                logger.error(f"[{endpoint}] (MSSQL) EPA Channel Binding  : Unknown")
+                raise typer.Exit(1)
+
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
         raise typer.Exit(0)
+
     except typer.Exit:
-        # Handle typer.Exit to not mistakenly error on "Allowed" results
         raise
+
     except Exception as e:
         logger.error(f"Exception during MSSQL EPA testing: {str(e)}")
         raise typer.Exit(1)
