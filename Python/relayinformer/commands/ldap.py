@@ -125,9 +125,9 @@ def main(
             try:
                 if method == Method.BOTH:
                     if informer.RunLdap(dc):
-                        logger.info(f"\\[{dc}] (LDAP) server [red]enforcing[/] signing requirements", extra=OBJ_EXTRA_FMT)
+                        logger.info(f"\\[{dc}] (LDAP)  Signing:  [green]Enforced[/]", extra=OBJ_EXTRA_FMT)
                     else:
-                        logger.info(f"\\[{dc}] (LDAP) SERVER SIGNING REQUIREMENTS [green]NOT ENFORCED[/]!", extra=OBJ_EXTRA_FMT)
+                        logger.info(f"\\[{dc}] (LDAP)  Signing:  [red]Not Enforced[/] ([yellow]VULNERABLE[/])", extra=OBJ_EXTRA_FMT)
                     
                 if LdapInformer.DoesLdapsCompleteHandshake(dc):
                     ldapsChannelBindingAlwaysCheck = informer.RunLdapsNoEpa(dc)
@@ -135,12 +135,11 @@ def main(
                         informer.RunLdapsWithEpa(dc, timeout)
                     )
                     if ldapsChannelBindingAlwaysCheck == False and ldapsChannelBindingWhenSupportedCheck == True:
-                        logger.info(f"\\[{dc}] (LDAPS) channel binding is set to [yellow]when supported[/] - " \
-                                    "this may prevent an NTLM relay depending on the client's support for channel binding", extra=OBJ_EXTRA_FMT)
+                        logger.info(f"\\[{dc}] (LDAPS) Binding: [yellow]When Supported[/] ([yellow]VULNERABLE[/])", extra=OBJ_EXTRA_FMT)
                     elif ldapsChannelBindingAlwaysCheck == False and ldapsChannelBindingWhenSupportedCheck == False:
-                            logger.info(f"\\[{dc}] (LDAPS) CHANNEL BINDING SET TO [green]NEVER[/]! PARTY TIME!", extra=OBJ_EXTRA_FMT)
+                            logger.info(f"\\[{dc}] (LDAPS) Binding:  [red]Never[/] ([yellow]VULNERABLE[/]) ", extra=OBJ_EXTRA_FMT)
                     elif ldapsChannelBindingAlwaysCheck == True:
-                        logger.info(f"\\[{dc}] (LDAPS) channel binding set to [red]required[/], no fun allowed", extra=OBJ_EXTRA_FMT)
+                        logger.info(f"\\[{dc}] (LDAPS) Binding:  [green]Required[/]", extra=OBJ_EXTRA_FMT)
                     else:
                         logger.error(f"\\[{dc}] Something went wrong...")
                         logger.debug("For troubleshooting:\nldapsChannelBindingAlwaysCheck - " +str(ldapsChannelBindingAlwaysCheck)+"\nldapsChannelBindingWhenSupportedCheck: "+str(ldapsChannelBindingWhenSupportedCheck))
